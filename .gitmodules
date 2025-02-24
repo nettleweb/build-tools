@@ -1,0 +1,6 @@
+[submodule "static"]
+	path = static
+	url = http://google.com
+[submodule "games"]
+	path = games
+	url = http://google.com

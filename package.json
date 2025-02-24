@@ -1,0 +1,25 @@
+{
+	"main": "main.js",
+	"type": "module",
+	"private": true,
+	"devDependencies": {
+		"@nettleweb/core": "^0.0.1",
+		"emoji-picker-element": "^1.26.1",
+		"engine.io-client": "^6.6.3",
+		"fflate": "^0.8.2",
+		"firebase": "^11.3.1",
+		"lean-qr": "^2.4.0",
+		"puppeteer": "^24.2.1",
+		"ts-loader": "^9.5.2",
+		"webpack": "^5.98.0",
+		"webpack-cli": "^6.0.1"
+	},
+	"scripts": {
+		"build": "./scripts/build.sh",
+		"clean": "./scripts/clean.js",
+		"config": "./scripts/config.js",
+		"compile": "./scripts/compile.js",
+		"genprev": "./scripts/genprev.js",
+		"start": "./scripts/start.js > /dev/null 2>&1 & disown"
+	}
+}
