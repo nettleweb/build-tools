@@ -371,31 +371,6 @@ import { Socket, SocketOptions } from "engine.io-client";
 		return elem;
 	}
 
-	function createItemElement(item: ItemInfo): HTMLElement {
-		const elem = doc.createElement("div");
-		elem.className = "item";
-		elem.onclick = () => {
-			openItem(item).catch((err) => {
-				error("Failed to open the item. Message: " + err);
-			});
-		};
-
-		elem.style.backgroundImage = "url(\"" + proxyURL(item.prev[0]) + "\"), url(\"/res/preview.svg\")";
-
-		{
-			const e = doc.createElement("div");
-			e.textContent = item.name;
-			elem.appendChild(e);
-		}
-		{
-			const e = doc.createElement("span");
-			e.textContent = "$" + item.price.toFixed(2);
-			elem.appendChild(e);
-		}
-
-		return elem;
-	}
-
 	function createFrameElement(url: string): HTMLElement {
 		if (url.startsWith("https://")) {
 			const e = doc.createElement("iframe");
@@ -598,7 +573,6 @@ import { Socket, SocketOptions } from "engine.io-client";
 	const content = $("content");
 	const accnBtn = $("accn-btn");
 	const strmBtn = $("strm-btn") as HTMLButtonElement;
-	const commBtn = $("comm-btn");
 	const nmsgBtn = $("nmsg-btn") as HTMLButtonElement;
 	const sideMenu = $("side-menu") as HTMLInputElement;
 
@@ -785,14 +759,11 @@ import { Socket, SocketOptions } from "engine.io-client";
 	let winTop: Window | nul;
 	let cloaking: boolean;
 	let gameList: GameList;
-	let itemList: ItemList = [];
-	let itemLock: Promise<void>;
 	let unblEndSes: (() => void) | null = null;
 	let loadAccnInfo: () => void;
 
 	// lateinit functions
 	let openChat: (info: UserInfo) => Promise<void>;
-	let openItem: (item: ItemInfo) => Promise<void>;
 	let playGame: (game: GameInfo) => Promise<void>;
 	let openProfile: (uid: string) => Promise<void>;
 	let openChannel: (chId: string) => Promise<void>;
@@ -1743,14 +1714,13 @@ import { Socket, SocketOptions } from "engine.io-client";
 				submit.disabled = true;
 
 				fetchSIO(SIOPath.editgameinfo, [user, date, name, tags, desc]).then(() => {
-					submit.disabled = false;
 					gameEdit.disabled = true;
 					gameEdit.innerHTML = "Requested. Pending review...";
-
 					editor.style.display = "none";
 					gameEdit.style.display = "block";
 				}).catch((err) => {
 					error("Failed to submit request. Message: " + err);
+				}).finally(() => {
 					submit.disabled = false;
 				});
 			};
@@ -1775,9 +1745,9 @@ import { Socket, SocketOptions } from "engine.io-client";
 
 				fetchSIO(SIOPath.postcomment, [user, date, value]).then(() => {
 					comm.value = "";
-					post.disabled = false;
 				}).catch((err) => {
 					error("Failed to post comment. Message: " + err);
+				}).finally(() => {
 					post.disabled = false;
 				});
 			};
@@ -1804,9 +1774,10 @@ import { Socket, SocketOptions } from "engine.io-client";
 
 						fetchSIO(SIOPath.like, date).then(() => {
 							gameLike.textContent = (++n).toString(10);
-							gameLike.disabled = false;
 						}).catch((err) => {
 							error("Failed to give a like. Message: " + err);
+						}).finally(() => {
+							gameLike.disabled = false;
 						});
 					};
 				}
@@ -2477,501 +2448,6 @@ import { Socket, SocketOptions } from "engine.io-client";
 	}
 
 	{
-		const itemContainer = $("item-container");
-		const itemCategory = $("item-category");
-		const itemPreviews = $("previews");
-		const itemSeller = $("seller");
-		const itemPrice = $("price");
-		const itemStock = $("stock");
-		const itemPage = $("item-page");
-		const itemName = $("iname");
-		const itemTags = $("itags");
-		const itemDate = $("idate");
-		const itemDesc = $("idesc");
-		const itemId = $("icode");
-
-		const cart: ItemList = [];
-		const iadd = $("iadd") as HTMLButtonElement;
-		const ibuy = $("ibuy") as HTMLButtonElement;
-		const checkout = $("checkout");
-
-		const navBack = $("nav-back") as HTMLButtonElement;
-		const navForward = $("nav-forward") as HTMLButtonElement;
-		const navPageNo = $("nav-page-no") as HTMLInputElement;
-		const navPageCount = $("nav-page-count");
-		const purchasePage = $("purchase-page");
-
-		const pages: ItemList[] = [];
-
-		let order: string = "p";
-		let match: string = "all";
-		let search: string = "";
-		let currentPage: number = 0;
-
-		itemLock = fetchSIO(SIOPath.store).then((data) => {
-			if (data == null || typeof data !== "object") {
-				itemContainer.innerHTML = "Error: Failed to load contents. Message: Failed to parse server response.";
-				return;
-			}
-
-			const list: ItemList = data.pros;
-			if (!Array.isArray(list) || list.length === 0) {
-				itemContainer.innerHTML = "Sorry, no items are available at this moment.";
-				return;
-			}
-
-			{
-				const cats = data.cats;
-				const btns = itemCategory.children;
-
-				{
-					const e = doc.createElement("button");
-					e.type = "button";
-					e.innerHTML = "All";
-					e.setAttribute("data-current", "");
-
-					e.onclick = () => {
-						for (const e of btns)
-							e.removeAttribute("data-current");
-
-						match = "all";
-						updateItemList();
-						e.setAttribute("data-current", "");
-					};
-
-					itemCategory.appendChild(e);
-				}
-
-				if (Array.isArray(cats) && cats.length > 0) {
-					for (const it of cats) {
-						const e = doc.createElement("button");
-						e.type = "button";
-						e.textContent = it;
-
-						e.onclick = () => {
-							for (const e of btns)
-								e.removeAttribute("data-current");
-
-							match = it;
-							updateItemList();
-							e.setAttribute("data-current", "");
-						};
-
-						itemCategory.appendChild(e);
-					}
-				}
-			}
-
-			itemList = list;
-			updateItemList();
-		}).catch((err) => {
-			itemContainer.textContent = "Failed to load contents. Message: " + err;
-		});
-
-		{
-			const itemSearch = $("item-search") as HTMLFormElement;
-			const searchInput = q("#item-search>input") as HTMLInputElement;
-
-			let __timer__: number = 0;
-
-			itemSearch.onsubmit = (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-
-				search = searchInput.value.trim().toLowerCase();
-				clearTimeout(__timer__);
-				updateItemList();
-			};
-			searchInput.onblur = () => {
-				search = searchInput.value.trim().toLowerCase();
-				clearTimeout(__timer__);
-				updateItemList();
-			};
-			searchInput.oninput = () => {
-				clearTimeout(__timer__);
-				__timer__ = setTimeout(() => {
-					search = searchInput.value.trim().toLowerCase();
-					updateItemList();
-				}, 1000);
-			};
-		}
-		{
-			const elem = $("item-sort") as HTMLSelectElement;
-			elem.value = order = localStorage.getItem("_$so") || "n";
-			elem.onchange = () => {
-				localStorage.setItem("_$so", order = elem.value);
-				updateItemList();
-			};
-		}
-
-		function cmpStr(a: string, b: string): number {
-			return a > b ? 1 : a < b ? -1 : 0;
-		}
-
-		function matchItemList(): ItemList {
-			if (match === "all")
-				return search.length > 0 ? itemList.filter((e) => e.name.toLowerCase().indexOf(search) >= 0 || e.desc.toLowerCase().indexOf(search) >= 0 || e.cats.indexOf(search) >= 0) : [...itemList];
-			else
-				return itemList.filter((e) => e.cats.split(",").indexOf(match) >= 0 && (search.length === 0 || e.name.toLowerCase().indexOf(search) >= 0 || e.desc.toLowerCase().indexOf(search) >= 0));
-		}
-
-		function updateItemList() {
-			currentPage = 0;
-			pages.length = 0;
-
-			const list = matchItemList();
-			if (list.length === 0) {
-				navBack.disabled = true;
-				navForward.disabled = true;
-				itemContainer.innerHTML = "Sorry, no matching results found :(";
-				return;
-			}
-
-			switch (order) {
-				case "r":
-					shuffle(list);
-					break;
-				case "d":
-					list.sort((a, b) => b.date - a.date);
-					break;
-				default:
-					list.sort((a, b) => cmpStr(a.name, b.name));
-					break;
-			}
-
-			for (let i = 0; i < list.length; i += 100)
-				pages.push(list.slice(i, i + 100));
-
-			updatePageList();
-		}
-
-		function updatePageList() {
-			navPageNo.min = "1";
-			navPageNo.max = navPageCount.innerHTML = String(pages.length);
-			navPageNo.value = String(currentPage + 1);
-			itemContainer.innerHTML = "";
-
-			if (currentPage < 1)
-				navBack.disabled = true;
-			else
-				navBack.disabled = false;
-
-			if (currentPage >= pages.length - 1)
-				navForward.disabled = true;
-			else
-				navForward.disabled = false;
-
-			for (const item of pages[currentPage]) {
-				if (item.stock >= 1)
-					itemContainer.appendChild(createItemElement(item));
-			}
-		}
-
-		function openPurchasePage() {
-			if (unblEndSes != null)
-				unblEndSes();
-			for (const e of curElems)
-				e.removeAttribute("data-current");
-
-			content.scrollTo({
-				top: 0,
-				left: 0,
-				behavior: "instant"
-			});
-
-			sideMenu.checked = false;
-			purchasePage.innerHTML = "";
-			purchasePage.setAttribute("data-current", "");
-
-			{
-				const e = doc.createElement("h2");
-				e.textContent = "Confirm Purchase";
-				purchasePage.appendChild(e);
-			}
-
-			let totalUSD: number = 0;
-			const itemIds: string[] = [];
-
-			for (const item of cart) {
-				const elem = doc.createElement("div");
-				const price = item.price;
-				const itemId = item.date.toString(36);
-
-				{
-					const e = doc.createElement("img");
-					e.src = proxyURL(item.prev[0]);
-					e.alt = "Preview";
-					e.width = 50;
-					e.height = 50;
-					e.loading = "lazy";
-					e.decoding = "async";
-					e.draggable = false;
-					elem.appendChild(e);
-				}
-
-				{
-					const e = doc.createElement("div");
-					e.textContent = item.name;
-					elem.appendChild(e);
-				}
-				{
-					const e = doc.createElement("span");
-					e.textContent = "$" + price.toFixed(2);
-					elem.appendChild(e);
-				}
-
-				{
-					const e = doc.createElement("button");
-					e.type = "button";
-					e.title = "Remove item";
-					e.onclick = () => {
-						const i = cart.indexOf(item, 0);
-						if (i >= 0) {
-							elem.remove();
-							cart.splice(i, 1);
-							total.textContent = "Total: $" + (totalUSD - price).toFixed(2);
-
-							{
-								const i = itemIds.indexOf(itemId, 0);
-								if (i >= 0)
-									itemIds.splice(i, 1);
-							}
-
-							if (cart.length === 0) {
-								commBtn.click();
-								checkout.style.display = "none";
-							}
-						}
-					};
-					elem.appendChild(e);
-				}
-
-				totalUSD += price;
-				itemIds.push(itemId);
-				purchasePage.appendChild(elem);
-			}
-
-			const total = doc.createElement("span");
-			total.textContent = "Total: $" + totalUSD.toFixed(2);
-			purchasePage.appendChild(total);
-
-			const e = doc.createElement("button");
-			e.type = "button";
-			e.className = "pri-button";
-			e.textContent = "Continue";
-
-			e.onclick = () => {
-				if (user == null) {
-					accnBtn.click();
-					return;
-				}
-
-				const elem = doc.createElement("form");
-				elem.action = "https://secure.nettleweb.com/pay.xml";
-				elem.method = "GET";
-				elem.target = "_self";
-				elem.innerHTML = `<div>Please fill in the additional information below. It is required for continuing your purchase.</div>
-	<fieldset>
-		<legend>Delivery Address</legend>
-		<div>
-			<label for="addr1">Address Line 1:</label>
-			<input id="addr1" name="a1" type="text" required="" minlength="1" maxlength="200" autocomplete="off" />
-		</div>
-		<div>
-			<label for="addr2">Address Line 2:</label>
-			<input id="addr1" name="a2" type="text" maxlength="200" autocomplete="off" />
-		</div>
-		<div>
-			<label for="city">City:</label>
-			<input id="city" name="c" type="text" required="" minlength="1" maxlength="100" autocomplete="off" />
-		</div>
-		<div>
-			<label for="region">State/Region:</label>
-			<input id="region" name="r" type="text" required="" minlength="1" maxlength="100" autocomplete="off" />
-		</div>
-		<div>
-			<label for="country">Country:</label>
-			<select id="country" name="n">${config.cc}</select>
-		</div>
-		<div>
-			<label for="postcode">Post Code:</label>
-			<input id="postcode" name="p" type="text" required="" minlength="3" maxlength="20" autocomplete="off" />
-		</div>
-	</fieldset>
-	<div>Notice: Depending on your geolocation, additional delivery and processing fees may apply.</div>
-	<button type="submit" class="pri-button">Continue</button>`;
-
-				{
-					const e = doc.createElement("input");
-					e.type = "hidden";
-					e.name = "i";
-					e.value = itemIds.join(";");
-					elem.appendChild(e);
-				}
-				{
-					const e = doc.createElement("input");
-					e.type = "hidden";
-					e.name = "u";
-					e.value = user;
-					elem.appendChild(e);
-				}
-
-				purchasePage.innerHTML = "";
-				purchasePage.appendChild(elem);
-			};
-
-			purchasePage.appendChild(e);
-		}
-
-		openItem = async (item: ItemInfo) => {
-			if (unblEndSes != null)
-				unblEndSes();
-			for (const e of curElems)
-				e.removeAttribute("data-current");
-
-			content.scrollTo({
-				top: 0,
-				left: 0,
-				behavior: "instant"
-			});
-
-			sideMenu.checked = false;
-			itemPage.setAttribute("data-current", "");
-			itemSeller.innerHTML = "";
-			itemPreviews.innerHTML = "";
-
-			itemId.textContent = item.date.toString(36);
-			itemName.textContent = item.name;
-			itemTags.textContent = item.cats.replace(/\,/g, ", ") || "None";
-			itemDate.textContent = dateToStr(item.date);
-			itemDesc.textContent = item.desc || "No information provided by the provider.";
-			itemStock.textContent = item.stock.toString(10);
-			itemPrice.textContent = "$" + item.price.toFixed(2);
-
-			for (const p of item.prev) {
-				const e = doc.createElement("img");
-				e.src = proxyURL(p);
-				e.alt = "Preview";
-				e.width = 400;
-				e.height = 300;
-				e.loading = "lazy";
-				e.decoding = "async";
-				e.draggable = false;
-				itemPreviews.appendChild(e);
-			}
-
-			if (item.stock >= 1) {
-				if (cart.indexOf(item, 0) < 0) {
-					iadd.disabled = false;
-					ibuy.disabled = false;
-
-					iadd.onclick = () => {
-						cart.push(item);
-						ibuy.onclick = openPurchasePage;
-						iadd.disabled = true;
-						checkout.style.display = "block";
-					};
-					ibuy.onclick = () => {
-						cart.push(item);
-						openPurchasePage();
-						checkout.style.display = "block";
-					};
-				} else {
-					iadd.disabled = true;
-					ibuy.disabled = false;
-					ibuy.onclick = openPurchasePage;
-				}
-			} else {
-				iadd.disabled = true;
-				ibuy.disabled = true;
-			}
-
-			{
-				const info = await fetchSIO(SIOPath.userinfo, item.user || "anonymous");
-
-				{
-					const e = doc.createElement("img");
-					e.src = proxyURL(info.icon);
-					e.alt = "Avatar";
-					e.width = 40;
-					e.height = 40;
-					e.loading = "eager";
-					e.decoding = "sync";
-					e.draggable = false;
-					itemSeller.appendChild(e);
-				}
-
-				{
-					const e = doc.createElement("div");
-					e.className = "user";
-					e.textContent = info.id;
-
-					switch (info.vip) {
-						case 3:
-							e.setAttribute("data-vip", "gold");
-							break;
-						case 4:
-							e.setAttribute("data-vip", "diamond");
-							break;
-						default:
-							break;
-					}
-
-					itemSeller.appendChild(e);
-				}
-
-				itemSeller.onclick = () => {
-					openProfile(info.uid).catch((err) => {
-						error("Failed to open user profile. Message: " + err);
-					});
-				};
-			}
-		};
-
-		navBack.onclick = () => {
-			currentPage--;
-			updatePageList();
-
-			itemContainer.scrollIntoView({
-				behavior: "instant",
-				inline: "start",
-				block: "start"
-			});
-		};
-		navForward.onclick = () => {
-			currentPage++;
-			updatePageList();
-
-			itemContainer.scrollIntoView({
-				behavior: "instant",
-				inline: "start",
-				block: "start"
-			});
-		};
-		navPageNo.onblur = () => {
-			const value = parseInt(navPageNo.value.trim(), 10) || 0;
-			if ((currentPage + 1) !== value) {
-				if (value < 1 || value > pages.length) {
-					navPageNo.value = "1";
-					currentPage = 0;
-				} else currentPage = value - 1;
-
-				updatePageList();
-				itemContainer.scrollIntoView({
-					behavior: "instant",
-					inline: "start",
-					block: "start"
-				});
-			}
-		};
-		navPageNo.onchange = () => {
-			navPageNo.blur();
-		};
-
-		checkout.onclick = openPurchasePage;
-	}
-
-	{
 		const addr = $("addr") as HTMLInputElement;
 		const mode = $("ub-mode") as HTMLSelectElement;
 
@@ -3292,259 +2768,6 @@ import { Socket, SocketOptions } from "engine.io-client";
 
 			throw new Error("Too many unsuccessful attempts. Message from the last attempt: " + String(msg));
 		}
-	}
-
-	{
-		const itemId = $("item-id") as HTMLInputElement;
-		const itemAdd = $("item-add") as HTMLButtonElement;
-		const itemName = $("item-name") as HTMLInputElement;
-		const itemTags = $("item-tags") as HTMLInputElement;
-		const itemPrev = $("item-prev") as HTMLInputElement;
-		const itemDel1 = $("item-del1") as HTMLInputElement;
-		const itemDel2 = $("item-del2") as HTMLInputElement;
-		const itemDesc = $("item-desc") as HTMLInputElement;
-		const itemStock = $("item-stock") as HTMLInputElement;
-		const itemPrice = $("item-price") as HTMLInputElement;
-
-		const sOrders = $("s-orders");
-		const smgrPage = $("store-manager-page");
-
-		itemAdd.onclick = async () => {
-			const name = itemName.value.replace(/\s+/g, " ").trim();
-			if (name.length === 0) {
-				error("Item name must not be empty.");
-				return;
-			}
-			if (name.length > 256) {
-				error("Item name must be less than 256 characters in length.");
-				return;
-			}
-
-			const tags = itemTags.value.trim().toLowerCase().split(",").map((v) => v.replace(/\s+/g, " ").trim()).join(",");
-			if (tags.length === 0) {
-				error("Item must have at least one tag.");
-				return;
-			}
-			if (tags.length > 300) {
-				error("Item tags list must be less than 300 characters long in total.");
-				return;
-			}
-
-			const desc = itemDesc.value.replace(/\s+/g, " ").trim();
-			if (desc.length < 10) {
-				error("Item description must have at least 10 characters.");
-				return;
-			}
-			if (desc.length > 5000) {
-				error("Item description text must be less than 5000 characters in length.");
-				return;
-			}
-
-			const del1 = parseFloat(itemDel1.value) || 0;
-			const del2 = parseFloat(itemDel2.value) || 0;
-
-			if (del1 < 0 || del1 > 99.99 || del2 < 0 || del2 > 99.99) {
-				error("Item delivery price must be between the range: 0-99.99");
-				return;
-			}
-
-			const stock = parseInt(itemStock.value, 10) || 0;
-			if (stock < 1 || stock > 99999) {
-				error("Item stock must be between the range: 1-99999");
-				return;
-			}
-
-			const price = parseFloat(itemPrice.value) || 0;
-			if (price < 0.01 || price > 999.99) {
-				error("Item price must be between the range: 0.01-999.99");
-				return;
-			}
-
-			const previews: any[] = Array.from(itemPrev.files || []);
-			if (previews.length < 1) {
-				error("Please provide at least one preview image for this item.");
-				return;
-			}
-			if (previews.length > 10) {
-				error("The maximum number of preview images allowed for this item is 10.");
-				return;
-			}
-
-			itemAdd.disabled = true;
-
-			for (let i = 0; i < previews.length; i++) {
-				const blob = await resizeImage(previews[i], 400, 300);
-				if (blob == null) {
-					error("Error: Failed to decode and resize preview images.");
-					return;
-				}
-
-				previews[i] = await blob.arrayBuffer();
-			}
-
-			try {
-				await fetchSIO(SIOPath.addproduct, [user, itemId.value.trim(), name, tags, desc, previews, stock, price, del1, del2]);
-			} catch (err) {
-				error("Failed to add this item. Message: " + err);
-			}
-
-			itemId.value = "";
-			itemName.value = "";
-			itemTags.value = "";
-			itemPrev.value = "";
-			itemDesc.value = "";
-			itemStock.value = "";
-			itemPrice.value = "";
-
-			itemAdd.disabled = false;
-		};
-
-		$("sm").onclick = () => {
-			if (unblEndSes != null)
-				unblEndSes();
-			for (const e of curElems)
-				e.removeAttribute("data-current");
-
-			content.scrollTo({
-				top: 0,
-				left: 0,
-				behavior: "instant"
-			});
-
-			sOrders.innerHTML = "Loading...";
-			sideMenu.checked = false;
-			smgrPage.setAttribute("data-current", "");
-
-			fetchSIO(SIOPath.getSOrders, user).then((list: OrderList) => {
-				if (!Array.isArray(list) || list.length < 1) {
-					sOrders.innerHTML = "You don't have any orders yet.";
-					return;
-				}
-
-				const elem = doc.createElement("table");
-				elem.innerHTML = `<thead><tr><th scope="col">ID</th><th scope="col">Date</th><th scope="col">Items</th><th scope="col">Price*</th><th scope="col">Contact</th><th scope="col">Address</th><th scope="col">Confirm Payment &amp; Delivery</th></tr></thead>`;
-
-				{
-					const e = doc.createElement("tbody");
-					for (const it of list) {
-						const el = doc.createElement("tr");
-
-						{
-							const e = doc.createElement("td");
-							e.textContent = it.id;
-							el.appendChild(e);
-						}
-						{
-							const e = doc.createElement("td");
-							e.textContent = dateToStr(it.date);
-							el.appendChild(e);
-						}
-						{
-							const e = doc.createElement("td");
-							for (const p of it.pros) {
-								const elem = doc.createElement("div");
-								for (const e of itemList) {
-									if (e.date.toString(36) === p) {
-										elem.textContent = e.name;
-										break;
-									}
-								}
-								e.appendChild(elem);
-							}
-							el.appendChild(e);
-						}
-						{
-							const e = doc.createElement("td");
-							e.textContent = "$" + it.price.toFixed(2);
-							el.appendChild(e);
-						}
-						{
-							const e = doc.createElement("td");
-							e.textContent = it.buyerEmail;
-							el.appendChild(e);
-						}
-						{
-							const e = doc.createElement("td");
-							e.textContent = it.address;
-							el.appendChild(e);
-						}
-						{
-							const e = doc.createElement("td");
-
-							switch (it.state) {
-								case 0:
-									{
-										const btn = doc.createElement("button");
-										btn.type = "button";
-										btn.textContent = "Confirm";
-										btn.onclick = () => {
-											fetchSIO(SIOPath.confirmorder, [user, it.id]).then(() => {
-												e.innerHTML = "Confirmed";
-											}).catch((err) => {
-												error("Failed to confirm payment. Message: " + err);
-											});
-										};
-										e.appendChild(btn);
-									}
-									{
-										const btn = doc.createElement("button");
-										btn.type = "button";
-										btn.textContent = "Reject";
-										btn.onclick = () => {
-											fetchSIO(SIOPath.cancelorder, [user, it.id, true]).then(() => {
-												e.innerHTML = "Rejected";
-											}).catch((err) => {
-												error("Failed to reject payment. Message: " + err);
-											});
-										};
-										e.appendChild(btn);
-									}
-									break;
-								case 1:
-									e.innerHTML = "Aborted";
-									break;
-								case 2:
-									e.innerHTML = "Confirmed";
-									break;
-								default:
-									e.innerHTML = "Not Allowed";
-									break;
-							}
-
-							el.appendChild(e);
-						}
-
-						e.appendChild(el);
-					}
-					elem.appendChild(e);
-				}
-
-				sOrders.innerHTML = "<div>* including additional delivery fee</div>";
-				sOrders.prepend(elem);
-			}).catch((err) => {
-				error("Failed to fetch order list. Message: " + err);
-			});
-		};
-	}
-
-	{
-		const payu = $("payu") as HTMLButtonElement;
-
-		payu.onclick = () => {
-			const desc = paydesc.value.trim();
-			if (desc.length > 1000) {
-				error("Payment description must have more than 1000 characters in length.");
-				return;
-			}
-
-			payu.disabled = true;
-
-			fetchSIO(SIOPath.updatepayment, [user, desc, paycc.value]).then(() => {
-				payu.disabled = false;
-			}).catch((err) => {
-				error("Failed to update payment description. Message: " + err);
-			});
-		};
 	}
 
 	{
@@ -4076,10 +3299,12 @@ import { Socket, SocketOptions } from "engine.io-client";
 
 			function handleMessageCreate(chnl: string, msg: Message) {
 				if (channel === chnl) {
+					const pos = messages.scrollTop; // side effects - do not inline
 					const top = messages.scrollHeight - messages.clientHeight;
+
 					messages.appendChild(createMessageElement(msg));
 
-					if (top === messages.scrollTop) {
+					if (pos >= top - 100) {
 						messages.scrollTo({
 							behavior: "instant",
 							left: 0,
@@ -4214,9 +3439,9 @@ import { Socket, SocketOptions } from "engine.io-client";
 											top: messages.scrollHeight - height
 										});
 									}
-									fetching = false;
 								}).catch((err) => {
 									error("Failed to fetch messages. Reason: " + err);
+								}).finally(() => {
 									fetching = false;
 								});
 							}
@@ -4345,9 +3570,9 @@ import { Socket, SocketOptions } from "engine.io-client";
 									top: messages.scrollHeight - height
 								});
 							}
-							fetching = false;
 						}).catch((err) => {
 							error("Failed to fetch messages. Reason: " + err);
+						}).finally(() => {
 							fetching = false;
 						});
 					}
@@ -4457,9 +3682,9 @@ import { Socket, SocketOptions } from "engine.io-client";
 						}
 
 						starter.style.display = "none";
-						grJoin.disabled = false;
 					}).catch((err) => {
 						error("Failed to join group chat. Message: " + err);
+					}).finally(() => {
 						grJoin.disabled = false;
 					});
 				};
@@ -4489,9 +3714,9 @@ import { Socket, SocketOptions } from "engine.io-client";
 						}
 
 						starter.style.display = "none";
-						grCreate.disabled = false;
 					}).catch((err) => {
 						error("Failed to create new group. Message: " + err);
+					}).finally(() => {
 						grCreate.disabled = false;
 					});
 				};
@@ -5076,7 +4301,6 @@ import { Socket, SocketOptions } from "engine.io-client";
 		const afBtn = $("af") as HTMLButtonElement;
 		const dmBtn = $("dm");
 		const games = $("pf-games");
-		const items = $("pf-items");
 		const avatar = $("avatar") as HTMLImageElement;
 		const profPage = $("profile-page");
 
@@ -5098,12 +4322,12 @@ import { Socket, SocketOptions } from "engine.io-client";
 
 			afBtn.disabled = false;
 			afBtn.innerHTML = "Add Friend";
-			games.removeAttribute("style");
-			items.removeAttribute("style");
 			avatar.src = proxyURL(info.icon);
-			games.innerHTML = items.innerHTML = "";
-			games.onscrollend = items.onscrollend = null;
 			bio.textContent = info.bio || "NettleWeb User";
+
+			games.innerHTML = "";
+			games.onscrollend = null;
+			games.removeAttribute("style");
 
 			{
 				const user = id.textContent = info.id;
@@ -5171,33 +4395,9 @@ import { Socket, SocketOptions } from "engine.io-client";
 					games.innerHTML = "This user has not uploaded any games yet.";
 				}
 			}
-
-			{
-				const list = itemList.filter((e) => e.user === uid);
-				if (list.length > 0) {
-					let index: number = 25;
-					for (const item of list.slice(0, 25))
-						items.appendChild(createItemElement(item));
-
-					items.onscrollend = () => {
-						if (items.scrollTop >= (items.scrollHeight - items.clientHeight)) {
-							const end = index + 25;
-							if (end >= list.length)
-								items.onscrollend = null;
-							for (const item of list.slice(index, index = end))
-								items.appendChild(createItemElement(item));
-						}
-					};
-				} else {
-					items.style.overflow = "unset";
-					items.innerHTML = "This user does not have a store yet.";
-				}
-			}
 		};
 	}
 
-	const paycc = $("paycc") as HTMLSelectElement;
-	const paydesc = $("paydesc") as HTMLTextAreaElement;
 	const chatProf = $("chat-profile");
 	const curElems = doc.querySelectorAll<HTMLElement>("#nav-bar>button, #content>div, #nmsg-btn, #accn-btn, #nwidget");
 
@@ -5205,7 +4405,6 @@ import { Socket, SocketOptions } from "engine.io-client";
 		const addFriendBtn = $("ff") as HTMLButtonElement;
 		const accnPage = $("accountinfo-page");
 		const friends = $("ac-friends");
-		const orders = $("ac-orders");
 
 		function renderFriend(elem: HTMLElement, info: FriendInfo) {
 			const uid: string = info.uid;
@@ -5338,99 +4537,6 @@ import { Socket, SocketOptions } from "engine.io-client";
 		}
 
 		loadAccnInfo = () => {
-			fetchSIO(SIOPath.getBOrders, user).then((list) => {
-				if (Array.isArray(list) && list.length > 0) {
-					const el = doc.createElement("table");
-					el.innerHTML = `<thead><tr><th scope="col">ID</th><th scope="col">Date</th><th scope="col">Items</th><th scope="col">Price*</th><th scope="col">State</th><th scope="col">Contact</th></tr></thead>`;
-
-					{
-						const e = doc.createElement("tbody");
-						for (const it of list) {
-							const el = doc.createElement("tr");
-
-							{
-								const e = doc.createElement("td");
-								e.textContent = it.id;
-								el.appendChild(e);
-							}
-							{
-								const e = doc.createElement("td");
-								e.textContent = dateToStr(it.date);
-								el.appendChild(e);
-							}
-							{
-								const e = doc.createElement("td");
-								for (const p of it.pros) {
-									const elem = doc.createElement("div");
-									for (const e of itemList) {
-										if (e.date.toString(36) === p) {
-											elem.textContent = e.name;
-											break;
-										}
-									}
-									e.appendChild(elem);
-								}
-								el.appendChild(e);
-							}
-							{
-								const e = doc.createElement("td");
-								e.textContent = "$" + it.price.toFixed(2);
-								el.appendChild(e);
-							}
-							{
-								const e = doc.createElement("td");
-								switch (it.state) {
-									case 0:
-										e.textContent = "Pending Payment";
-
-										{
-											const el = doc.createElement("button");
-											el.type = "button";
-											el.textContent = "Cancel";
-											el.onclick = () => {
-												fetchSIO(SIOPath.cancelorder, [user, it.id, false]).then(() => {
-													e.innerHTML = "Aborted";
-												}).catch((err) => {
-													error("Failed to cancel order. Message: " + err);
-												});
-											};
-											e.appendChild(el);
-										}
-
-										break;
-									case 1:
-										e.textContent = "Aborted";
-										break;
-									case 2:
-										e.textContent = "Delivered";
-										break;
-									default:
-										e.textContent = "Unknown";
-										break;
-								}
-								el.appendChild(e);
-							}
-							{
-								const e = doc.createElement("td");
-								e.textContent = it.sellerEmail;
-								el.appendChild(e);
-							}
-
-							e.appendChild(el);
-						}
-						el.appendChild(e);
-					}
-
-					orders.innerHTML = "<div>* including additional delivery fee</div>";
-					orders.prepend(el);
-				} else {
-					orders.style.overflow = "unset";
-					orders.innerHTML = "You don't have any orders yet.";
-				}
-			}).catch((err) => {
-				orders.innerHTML = "Failed to fetch the list. Message: " + err;
-			});
-
 			fetchSIO(SIOPath.getfriends, [user, 0]).then((list) => {
 				friends.innerHTML = "";
 
@@ -5469,7 +4575,7 @@ import { Socket, SocketOptions } from "engine.io-client";
 			for (const e of curElems)
 				e.removeAttribute("data-current");
 
-			orders.innerHTML = friends.innerHTML = "Loading...";
+			friends.innerHTML = "Loading...";
 			content.scrollTo({
 				top: 0,
 				left: 0,
@@ -5545,11 +4651,17 @@ import { Socket, SocketOptions } from "engine.io-client";
 		const homeBtn = $("home-btn");
 		const gameBtn = $("game-btn");
 		const appsBtn = $("apps-btn");
+		const infoBtn = $("info-btn");
 
 		const homePage = $("home-page");
 		const gamePage = $("games-page");
-		const commPage = $("store-page");
+		const gemuPage = $("gamemu-page");
+		const calcPage = $("desmos-page");
+		const wemuPage = $("webemu-page");
+		const consPage = $("console-page");
+		const unblPage = $("unbl0ck-page");
 		const appsPage = $("services-page");
+		const infoPage = $("mirrorlink-page");
 		const upldPage = $("uploadgames-page");
 		const settPage = $("settings-page");
 
@@ -5591,29 +4703,6 @@ import { Socket, SocketOptions } from "engine.io-client";
 				his.replaceState(void 0, "", "/games");
 			}
 		};
-		commBtn.onclick = () => {
-			if (unblEndSes != null)
-				unblEndSes();
-			for (const elem of curElems)
-				elem.removeAttribute("data-current");
-
-			content.scrollTo({
-				top: 0,
-				left: 0,
-				behavior: "instant"
-			});
-			sideMenu.checked = false;
-			commBtn.setAttribute("data-current", "");
-			commPage.setAttribute("data-current", "");
-
-			if (!mirror) {
-				if (!cloaking)
-					doc.title = "NettleWeb Store";
-
-				unblEndSes = restoreRootPath;
-				his.replaceState(void 0, "", "/shop");
-			}
-		};
 		$("goto-apps").onclick = appsBtn.onclick = () => {
 			if (unblEndSes != null)
 				unblEndSes();
@@ -5637,14 +4726,107 @@ import { Socket, SocketOptions } from "engine.io-client";
 				his.replaceState(void 0, "", "/apps");
 			}
 		};
+		infoBtn.onclick = () => {
+			if (unblEndSes != null)
+				unblEndSes();
+			for (const elem of curElems)
+				elem.removeAttribute("data-current");
+
+			content.scrollTo({
+				top: 0,
+				left: 0,
+				behavior: "instant"
+			});
+			sideMenu.checked = false;
+			infoBtn.setAttribute("data-current", "");
+			infoPage.setAttribute("data-current", "");
+
+			if (!mirror) {
+				if (!cloaking)
+					doc.title = "About NettleWeb";
+
+				unblEndSes = restoreRootPath;
+				his.replaceState(void 0, "", "/about");
+			}
+		};
+		$("u").onclick = () => {
+			if (unblEndSes != null)
+				unblEndSes();
+			for (const e of curElems)
+				e.removeAttribute("data-current");
+
+			unblPage.setAttribute("data-current", "");
+			sideMenu.checked = false;
+			content.scrollTo({
+				top: 0,
+				left: 0,
+				behavior: "instant"
+			});
+		};
+		$("e").onclick = () => {
+			if (unblEndSes != null)
+				unblEndSes();
+			for (const e of curElems)
+				e.removeAttribute("data-current");
+
+			gemuPage.setAttribute("data-current", "");
+			sideMenu.checked = false;
+			content.scrollTo({
+				top: 0,
+				left: 0,
+				behavior: "instant"
+			});
+		};
+		$("p").onclick = () => {
+			if (unblEndSes != null)
+				unblEndSes();
+			for (const e of curElems)
+				e.removeAttribute("data-current");
+
+			wemuPage.setAttribute("data-current", "");
+			sideMenu.checked = false;
+			content.scrollTo({
+				top: 0,
+				left: 0,
+				behavior: "instant"
+			});
+		};
+		$("c").onclick = () => {
+			if (unblEndSes != null)
+				unblEndSes();
+			for (const e of curElems)
+				e.removeAttribute("data-current");
+
+			consPage.setAttribute("data-current", "");
+			sideMenu.checked = false;
+			content.scrollTo({
+				top: 0,
+				left: 0,
+				behavior: "instant"
+			});
+		};
+		$("d").onclick = () => {
+			if (unblEndSes != null)
+				unblEndSes();
+			for (const e of curElems)
+				e.removeAttribute("data-current");
+
+			calcPage.setAttribute("data-current", "");
+			sideMenu.checked = false;
+			content.scrollTo({
+				top: 0,
+				left: 0,
+				behavior: "instant"
+			});
+		};
 		$("ug").onclick = () => {
 			if (unblEndSes != null)
 				unblEndSes();
 			for (const e of curElems)
 				e.removeAttribute("data-current");
 
-			sideMenu.checked = false;
 			upldPage.setAttribute("data-current", "");
+			sideMenu.checked = false;
 			content.scrollTo({
 				top: 0,
 				left: 0,
@@ -5694,13 +4876,9 @@ import { Socket, SocketOptions } from "engine.io-client";
 			case "/videos/":
 				strmBtn.click();
 				break;
-			case "/s":
-			case "/s/":
-			case "/shop":
-			case "/shop/":
-			case "/store":
-			case "/store/":
-				commBtn.click();
+			case "/about":
+			case "/about/":
+				infoBtn.click();
 				break;
 			case "/a":
 			case "/a/":
@@ -5898,9 +5076,7 @@ import { Socket, SocketOptions } from "engine.io-client";
 
 	{
 		async function loginCb() {
-			await itemLock;
 			loadAccnInfo();
-			paycc.innerHTML = config.cc;
 			accnBtn.title = "My Account";
 			accnBtn.setAttribute("data-ac", "");
 
@@ -5960,8 +5136,6 @@ import { Socket, SocketOptions } from "engine.io-client";
 			username.textContent = id;
 			username2.textContent = id;
 			$("ac-uid").textContent = uid;
-			paycc.value = data.paycc || "US";
-			paydesc.value = data.paydesc || "";
 
 			if (data.unread)
 				nmsgBtn.setAttribute("data-unread", "");
@@ -5996,27 +5170,6 @@ import { Socket, SocketOptions } from "engine.io-client";
 							elem.appendChild(createGameElement(game));
 					}
 				};
-			}
-
-			{
-				const elem = $("s-products");
-				const list = itemList.filter((e) => e.user === uid);
-
-				if (list.length > 0) {
-					let index: number = 25;
-					for (const item of list.slice(0, 25))
-						elem.appendChild(createItemElement(item));
-
-					elem.onscrollend = () => {
-						if (index < list.length && elem.scrollTop >= (elem.scrollHeight - elem.clientHeight)) {
-							for (const item of list.slice(index, index += 25))
-								elem.appendChild(createItemElement(item));
-						}
-					};
-				} else {
-					elem.style.overflow = "unset";
-					elem.innerHTML = "You have not published any products yet.";
-				}
 			}
 
 			chavatar.onclick = () => {
